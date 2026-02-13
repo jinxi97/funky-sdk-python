@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from io import BytesIO
-from urllib.error import HTTPError
+import socket
+from urllib.error import HTTPError, URLError
 
 import pytest
 
@@ -141,3 +142,18 @@ def test_import_from_funky() -> None:
     from funky import Workspace as ImportedWorkspace
 
     assert ImportedWorkspace is Workspace
+
+
+def test_workspace_create_timeout_has_actionable_message(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_urlopen(request, timeout: float):
+        raise URLError(socket.timeout("timed out"))
+
+    monkeypatch.setattr(funky._http, "urlopen", fake_urlopen)
+
+    with pytest.raises(APIError) as exc_info:
+        Workspace.create(api_secret="secret", timeout=5.0)
+
+    assert exc_info.value.status_code == 0
+    assert "timed out after 5.0s" in str(exc_info.value)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import socket
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -11,14 +12,14 @@ from .errors import APIError
 
 
 def post_and_parse_json(url: str, api_secret: str, timeout: float) -> Any:
-    payload = b"{}"
+    # Match FastAPI docs curl style: POST with empty body and auth header.
+    payload = b""
     request = Request(
         url=url,
         data=payload,
         method="POST",
         headers={
             "x-api-secret": api_secret,
-            "content-type": "application/json",
             "accept": "application/json",
         },
     )
@@ -33,7 +34,32 @@ def post_and_parse_json(url: str, api_secret: str, timeout: float) -> Any:
             details=error_details,
         ) from exc
     except URLError as exc:
+        reason = exc.reason
+        if isinstance(reason, TimeoutError | socket.timeout):
+            raise APIError(
+                status_code=0,
+                message=(
+                    f"Request timed out after {timeout:.1f}s while calling {url}. "
+                    "Try increasing the timeout in Workspace.create(timeout=...)."
+                ),
+            ) from exc
         raise APIError(status_code=0, message=f"Network error: {exc.reason}") from exc
+    except TimeoutError as exc:
+        raise APIError(
+            status_code=0,
+            message=(
+                f"Request timed out after {timeout:.1f}s while calling {url}. "
+                "Try increasing the timeout in Workspace.create(timeout=...)."
+            ),
+        ) from exc
+    except socket.timeout as exc:
+        raise APIError(
+            status_code=0,
+            message=(
+                f"Request timed out after {timeout:.1f}s while calling {url}. "
+                "Try increasing the timeout in Workspace.create(timeout=...)."
+            ),
+        ) from exc
 
     return safe_parse_json(body)
 

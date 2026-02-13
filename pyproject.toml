@@ -1,6 +1,6 @@
 [project]
 name = "funky-sdk"
-version = "0.1.0"
+version = "0.1.1"
 description = "SDK for connecting a Funky workspace to agents"
 readme = "README.md"
 authors = [
@@ -12,6 +12,7 @@ dependencies = []
 [dependency-groups]
 dev = [
     "pytest>=8.0.0",
+    "twine>=6.2.0",
 ]
 
 [tool.hatch.build.targets.wheel]
