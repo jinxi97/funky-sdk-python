@@ -1,0 +1,22 @@
+[project]
+name = "funky-sdk"
+version = "0.1.0"
+description = "Fake SDK for connecting a Funky workspace to agents"
+readme = "README.md"
+authors = [
+    { name = "JasonJin", email = "jason@funky.dev" }
+]
+requires-python = ">=3.13"
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/funky", "src/funky_sdk"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
