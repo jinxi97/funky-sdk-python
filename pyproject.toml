@@ -1,7 +1,7 @@
 [project]
 name = "funky-sdk"
 version = "0.1.0"
-description = "Fake SDK for connecting a Funky workspace to agents"
+description = "SDK for connecting a Funky workspace to agents"
 readme = "README.md"
 authors = [
     { name = "JasonJin", email = "jason@funky.dev" }
@@ -15,7 +15,7 @@ dev = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/funky", "src/funky_sdk"]
+packages = ["src/funky"]
 
 [build-system]
 requires = ["hatchling"]

@@ -1,6 +1,6 @@
-# funky-sdk (fake v0)
+# funky-sdk
 
-This is a deterministic fake SDK for connecting a Funky workspace to agents.
+SDK for connecting a Funky workspace to agents through the backend API.
 
 ## Install (uv)
 
@@ -9,6 +9,12 @@ uv sync --group dev
 ```
 
 ## Usage
+
+Set your API secret first:
+
+```bash
+export FUNKY_API_SECRET="your-secret"
+```
 
 ```python
 from google.adk.agents import Agent
@@ -27,10 +33,17 @@ def run_remote_code(command: str):
 agent = Agent(tools=[run_remote_code])
 ```
 
-## Fake behavior (v0)
+You can also pass the secret directly:
 
-- `Workspace.execute(command)` does not execute shell commands.
-- It always returns a structured result with:
-  - `stdout = "Command executed!"`
-  - `stderr = ""`
-  - `exit_code = 0`
+```python
+ws = Workspace.create(api_secret="your-secret")
+```
+
+## API behavior
+
+- `Workspace.create(...)` calls `POST /workspaces` and stores the returned `workspace_id`.
+- `Workspace.execute(command)` calls `POST /workspaces/{workspace_id}/exec?command=...`.
+- Responses are exposed via `ExecutionResult`:
+  - `stdout`: command output from backend
+  - `stderr`: currently empty string
+  - `exit_code`: currently `0` on successful API response
