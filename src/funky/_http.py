@@ -64,6 +64,56 @@ def post_and_parse_json(url: str, api_secret: str, timeout: float) -> Any:
     return safe_parse_json(body)
 
 
+def delete_and_parse_json(url: str, api_secret: str, timeout: float) -> Any:
+    request = Request(
+        url=url,
+        method="DELETE",
+        headers={
+            "x-api-secret": api_secret,
+            "accept": "application/json",
+        },
+    )
+    try:
+        with urlopen(request, timeout=timeout) as response:
+            body = response.read()
+    except HTTPError as exc:
+        error_details = safe_parse_json(exc.read())
+        raise APIError(
+            status_code=exc.code,
+            message=extract_error_message(error_details) or exc.reason or "API request failed",
+            details=error_details,
+        ) from exc
+    except URLError as exc:
+        reason = exc.reason
+        if isinstance(reason, TimeoutError | socket.timeout):
+            raise APIError(
+                status_code=0,
+                message=(
+                    f"Request timed out after {timeout:.1f}s while calling {url}. "
+                    "Try increasing the timeout in Workspace.create(timeout=...)."
+                ),
+            ) from exc
+        raise APIError(status_code=0, message=f"Network error: {exc.reason}") from exc
+    except TimeoutError as exc:
+        raise APIError(
+            status_code=0,
+            message=(
+                f"Request timed out after {timeout:.1f}s while calling {url}. "
+                "Try increasing the timeout in Workspace.create(timeout=...)."
+            ),
+        ) from exc
+    except socket.timeout as exc:
+        raise APIError(
+            status_code=0,
+            message=(
+                f"Request timed out after {timeout:.1f}s while calling {url}. "
+                "Try increasing the timeout in Workspace.create(timeout=...)."
+            ),
+        ) from exc
+
+    return safe_parse_json(body)
+
+
 def safe_parse_json(data: bytes) -> Any:
     text = data.decode("utf-8", errors="replace").strip()
     if not text:

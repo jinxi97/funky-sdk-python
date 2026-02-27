@@ -31,6 +31,10 @@ def run_remote_code(command: str):
 
 # Attach to Agent
 agent = Agent(tools=[run_remote_code])
+
+# Delete workspace when done
+message = ws.delete()
+print(message)
 ```
 
 You can also pass the secret directly:
@@ -43,6 +47,7 @@ ws = Workspace.create(api_secret="your-secret")
 
 - `Workspace.create(...)` calls `POST /workspaces` and stores the returned `workspace_id`.
 - `Workspace.execute(command)` calls `POST /workspaces/{workspace_id}/exec?command=...`.
+- `Workspace.delete()` calls `DELETE /workspaces/{workspace_id}` and returns the backend response string.
 - Responses are exposed via `ExecutionResult`:
   - `stdout`: command output from backend
   - `stderr`: currently empty string

@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from urllib.parse import quote, urlencode
 
-from ._http import post_and_parse_json
+from ._http import delete_and_parse_json, post_and_parse_json
 from .constants import DEFAULT_BASE_URL, DEFAULT_TIMEOUT_SECONDS
 from .errors import APIError, ConfigurationError
 from .models import ExecutionResult
@@ -91,4 +91,23 @@ class Workspace:
                 "expected object with stdout/stderr/exit_code"
             ),
             details=execution_response,
+        )
+
+    def delete(self) -> str:
+        """Delete this workspace."""
+        delete_response = delete_and_parse_json(
+            url=f"{self._base_url}/workspaces/{quote(self.workspace_id, safe='')}",
+            api_secret=self._api_secret,
+            timeout=self._timeout,
+        )
+        if isinstance(delete_response, str):
+            return delete_response
+
+        raise APIError(
+            status_code=200,
+            message=(
+                "Unexpected response format from Funky API: "
+                "expected delete response string"
+            ),
+            details=delete_response,
         )

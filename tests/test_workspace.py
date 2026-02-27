@@ -157,3 +157,40 @@ def test_workspace_create_timeout_has_actionable_message(
 
     assert exc_info.value.status_code == 0
     assert "timed out after 5.0s" in str(exc_info.value)
+
+
+def test_delete_calls_workspace_delete_endpoint(monkeypatch: pytest.MonkeyPatch) -> None:
+    requests: list[object] = []
+
+    def fake_urlopen(request, timeout: float):
+        requests.append(request)
+        if request.full_url.endswith("/workspaces"):
+            return FakeResponse(b'"ws-delete-id"')
+        return FakeResponse(b'"deleted"')
+
+    monkeypatch.setattr(funky._http, "urlopen", fake_urlopen)
+    ws = Workspace.create(api_secret="secret")
+    result = ws.delete()
+
+    assert result == "deleted"
+    assert len(requests) == 2
+    assert requests[1].get_method() == "DELETE"
+    assert requests[1].full_url.endswith("/workspaces/ws-delete-id")
+
+
+def test_delete_raises_on_unexpected_response_shape(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_urlopen(request, timeout: float):
+        if request.full_url.endswith("/workspaces"):
+            return FakeResponse(b'"ws-delete-id"')
+        return FakeResponse(b'{"ok": true}')
+
+    monkeypatch.setattr(funky._http, "urlopen", fake_urlopen)
+    ws = Workspace.create(api_secret="secret")
+
+    with pytest.raises(APIError) as exc_info:
+        ws.delete()
+
+    assert exc_info.value.status_code == 200
+    assert "expected delete response string" in str(exc_info.value)
