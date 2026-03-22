@@ -2,28 +2,34 @@
 
 from __future__ import annotations
 
-import os
 from urllib.parse import quote, urlencode
 
-from ._http import delete_and_parse_json, post_and_parse_json
+from ._http import delete_and_parse_json, post_and_parse_json, stream_sse
 from .constants import DEFAULT_BASE_URL, DEFAULT_TIMEOUT_SECONDS
-from .errors import APIError, ConfigurationError
+from .errors import APIError
 from .models import ExecutionResult
 
 
 class Workspace:
     """Workspace client that calls the Funky backend API."""
 
-    def __init__(self, workspace_id: str, api_secret: str, base_url: str, timeout: float) -> None:
-        self.workspace_id = workspace_id
-        self._api_secret = api_secret
+    def __init__(
+        self,
+        claim_name: str,
+        namespace: str,
+        pod_name: str,
+        base_url: str,
+        timeout: float,
+    ) -> None:
+        self.claim_name = claim_name
+        self.namespace = namespace
+        self.pod_name = pod_name
         self._base_url = base_url.rstrip("/")
         self._timeout = timeout
 
     @classmethod
     def create(
         cls,
-        api_secret: str | None = None,
         *,
         base_url: str = DEFAULT_BASE_URL,
         timeout: float = DEFAULT_TIMEOUT_SECONDS,
@@ -31,30 +37,54 @@ class Workspace:
         """
         Create a new workspace through the Funky API.
 
-        If api_secret is not provided, the SDK reads FUNKY_API_SECRET.
+        Blocks until the workspace is ready by consuming the SSE event stream.
         """
-        resolved_secret = api_secret or os.getenv("FUNKY_API_SECRET")
-        if not resolved_secret:
-            raise ConfigurationError("Missing API secret. Set FUNKY_API_SECRET or pass api_secret.")
+        normalized_url = base_url.rstrip("/")
 
-        workspace_id_response = post_and_parse_json(
-            url=f"{base_url.rstrip('/')}/workspaces",
-            api_secret=resolved_secret,
+        # Step 1: Create the workspace claim.
+        create_response = post_and_parse_json(
+            url=f"{normalized_url}/workspace",
             timeout=timeout,
         )
-        if isinstance(workspace_id_response, str):
-            workspace_id = workspace_id_response
-        elif isinstance(workspace_id_response, dict) and isinstance(workspace_id_response.get("workspace_id"), str):
-            workspace_id = workspace_id_response["workspace_id"]
-        else:
+        if not isinstance(create_response, dict) or not isinstance(create_response.get("claim_name"), str):
             raise APIError(
                 status_code=200,
-                message="Unexpected response format from Funky API: expected workspace id string",
-                details=workspace_id_response,
+                message="Unexpected response format: expected object with claim_name",
+                details=create_response,
             )
+        claim_name: str = create_response["claim_name"]
+        namespace: str = create_response.get("namespace", "")
+
+        # Step 2: Wait for the workspace to become ready via SSE.
+        pod_name = ""
+        for _event_type, data in stream_sse(
+            url=f"{normalized_url}/workspace/{claim_name}/events?namespace={namespace}",
+            timeout=timeout,
+        ):
+            if not isinstance(data, dict):
+                continue
+            status = data.get("status")
+            if status == "ready":
+                sandbox = data.get("sandbox", {})
+                pod_name = sandbox.get("pod_name", "")
+                break
+            if status == "failed":
+                raise APIError(
+                    status_code=500,
+                    message=f"Workspace creation failed: {data.get('detail', 'unknown error')}",
+                    details=data,
+                )
+
+        if not pod_name:
+            raise APIError(
+                status_code=0,
+                message="SSE stream ended without workspace becoming ready",
+            )
+
         return cls(
-            workspace_id=workspace_id,
-            api_secret=resolved_secret,
+            claim_name=claim_name,
+            namespace=namespace,
+            pod_name=pod_name,
             base_url=base_url,
             timeout=timeout,
         )
@@ -65,11 +95,13 @@ class Workspace:
             raise TypeError("command must be a string")
 
         execution_response = post_and_parse_json(
-            url=(
-                f"{self._base_url}/workspaces/{quote(self.workspace_id, safe='')}/exec"
-                f"?{urlencode({'command': command})}"
-            ),
-            api_secret=self._api_secret,
+            url=f"{self._base_url}/execute",
+            body={
+                "claim_name": self.claim_name,
+                "namespace": self.namespace,
+                "pod_name": self.pod_name,
+                "command": command,
+            },
             timeout=self._timeout,
         )
         if (
@@ -93,21 +125,23 @@ class Workspace:
             details=execution_response,
         )
 
-    def delete(self) -> str:
+    def delete(self) -> dict:
         """Delete this workspace."""
         delete_response = delete_and_parse_json(
-            url=f"{self._base_url}/workspaces/{quote(self.workspace_id, safe='')}",
-            api_secret=self._api_secret,
+            url=(
+                f"{self._base_url}/workspace/{quote(self.claim_name, safe='')}"
+                f"?{urlencode({'namespace': self.namespace})}"
+            ),
             timeout=self._timeout,
         )
-        if isinstance(delete_response, str):
+        if isinstance(delete_response, dict) and delete_response.get("deleted"):
             return delete_response
 
         raise APIError(
             status_code=200,
             message=(
                 "Unexpected response format from Funky API: "
-                "expected delete response string"
+                "expected {\"deleted\": true}"
             ),
             details=delete_response,
         )

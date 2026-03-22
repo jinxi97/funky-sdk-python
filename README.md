@@ -10,17 +10,11 @@ uv sync --group dev
 
 ## Usage
 
-Set your API secret first:
-
-```bash
-export FUNKY_API_SECRET="your-secret"
-```
-
 ```python
 from google.adk.agents import Agent
 from funky import Workspace
 
-# Initialize your SDK
+# Create a workspace (blocks until ready)
 ws = Workspace.create()
 
 # Define the tool using your simple API
@@ -37,17 +31,12 @@ message = ws.delete()
 print(message)
 ```
 
-You can also pass the secret directly:
-
-```python
-ws = Workspace.create(api_secret="your-secret")
-```
-
 ## API behavior
 
-- `Workspace.create(...)` calls `POST /workspaces` and stores the returned `workspace_id`.
-- `Workspace.execute(command)` calls `POST /workspaces/{workspace_id}/exec?command=...`.
-- `Workspace.delete()` calls `DELETE /workspaces/{workspace_id}` and returns the backend response string.
+- `Workspace.create(...)` calls `POST /workspace`, then streams `GET /workspace/{claim_name}/events` via SSE until the workspace is ready.
+- `Workspace.execute(command)` calls `POST /workspaces/{claim_name}/exec?command=...`.
+- `Workspace.delete()` calls `DELETE /workspaces/{claim_name}` and returns the backend response string.
+- The workspace exposes `claim_name`, `namespace`, and `pod_name` after creation.
 - Responses are exposed via `ExecutionResult`:
   - `stdout`: command output from backend
   - `stderr`: currently empty string
