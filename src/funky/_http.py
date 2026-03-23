@@ -80,6 +80,40 @@ def post_and_parse_json(
     return safe_parse_json(body)
 
 
+def get_and_parse_json(url: str, timeout: float) -> Any:
+    """GET from *url* and return the parsed JSON response."""
+    request = Request(
+        url=url,
+        method="GET",
+        headers={"accept": "application/json"},
+    )
+    try:
+        with urlopen(request, timeout=timeout) as response:
+            body = response.read()
+    except HTTPError as exc:
+        error_details = safe_parse_json(exc.read())
+        raise APIError(
+            status_code=exc.code,
+            message=extract_error_message(error_details) or exc.reason or "API request failed",
+            details=error_details,
+        ) from exc
+    except URLError as exc:
+        reason = exc.reason
+        if isinstance(reason, TimeoutError | socket.timeout):
+            raise APIError(
+                status_code=0,
+                message=f"Request timed out after {timeout:.1f}s while calling {url}.",
+            ) from exc
+        raise APIError(status_code=0, message=f"Network error: {exc.reason}") from exc
+    except (TimeoutError, socket.timeout) as exc:
+        raise APIError(
+            status_code=0,
+            message=f"Request timed out after {timeout:.1f}s while calling {url}.",
+        ) from exc
+
+    return safe_parse_json(body)
+
+
 def delete_and_parse_json(url: str, timeout: float) -> Any:
     request = Request(
         url=url,
