@@ -4,12 +4,26 @@ from __future__ import annotations
 
 import json
 import socket
+import ssl
 from collections.abc import Generator
+from functools import lru_cache
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
+import certifi
+
 from .errors import APIError
+
+
+@lru_cache(maxsize=1)
+def _default_ssl_context() -> ssl.SSLContext:
+    """Build a stable CA-backed SSL context for outbound HTTPS requests."""
+    return ssl.create_default_context(cafile=certifi.where())
+
+
+def _urlopen(request: Request, timeout: float):
+    return urlopen(request, timeout=timeout, context=_default_ssl_context())
 
 
 def post_and_parse_json(
@@ -40,7 +54,7 @@ def post_and_parse_json(
         headers=headers,
     )
     try:
-        with urlopen(request, timeout=timeout) as response:
+        with _urlopen(request, timeout=timeout) as response:
             body = response.read()
     except HTTPError as exc:
         error_details = safe_parse_json(exc.read())
@@ -88,7 +102,7 @@ def get_and_parse_json(url: str, timeout: float) -> Any:
         headers={"accept": "application/json"},
     )
     try:
-        with urlopen(request, timeout=timeout) as response:
+        with _urlopen(request, timeout=timeout) as response:
             body = response.read()
     except HTTPError as exc:
         error_details = safe_parse_json(exc.read())
@@ -121,7 +135,7 @@ def delete_and_parse_json(url: str, timeout: float) -> Any:
         headers={"accept": "application/json"},
     )
     try:
-        with urlopen(request, timeout=timeout) as response:
+        with _urlopen(request, timeout=timeout) as response:
             body = response.read()
     except HTTPError as exc:
         error_details = safe_parse_json(exc.read())
@@ -169,7 +183,7 @@ def stream_sse(url: str, timeout: float) -> Generator[tuple[str, Any], None, Non
         headers={"accept": "text/event-stream"},
     )
     try:
-        response = urlopen(request, timeout=timeout)
+        response = _urlopen(request, timeout=timeout)
     except HTTPError as exc:
         error_details = safe_parse_json(exc.read())
         raise APIError(

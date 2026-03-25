@@ -121,8 +121,11 @@ class Workspace:
             details=execution_response,
         )
 
-    def snapshot(self) -> Workspace:
-        """Take a snapshot of this workspace. Blocks until the snapshot is ready."""
+    def snapshot(self) -> str:
+        """Take a snapshot of this workspace. Blocks until the snapshot is ready.
+
+        Returns the snapshot name to use when restoring.
+        """
         # Step 1: Create the snapshot trigger.
         trigger_response = post_and_parse_json(
             url=f"{self._base_url}/snapshots/triggers",
@@ -153,7 +156,14 @@ class Workspace:
                 continue
             status = data.get("status")
             if status == "ready":
-                return self
+                snapshot_name = data.get("snapshot_name", "")
+                if not snapshot_name:
+                    raise APIError(
+                        status_code=200,
+                        message="Snapshot ready but no snapshot_name in response",
+                        details=data,
+                    )
+                return snapshot_name
             if status == "failed":
                 raise APIError(
                     status_code=500,
@@ -171,11 +181,12 @@ class Workspace:
         cls,
         claim_name: str,
         namespace: str,
+        snapshot_name: str,
         *,
         base_url: str = DEFAULT_BASE_URL,
         timeout: float = DEFAULT_TIMEOUT_SECONDS,
     ) -> Workspace:
-        """Restore a new workspace from the latest snapshot of the given workspace.
+        """Restore a new workspace from a specific snapshot.
 
         Blocks until the restored workspace is ready.
         """
@@ -184,7 +195,11 @@ class Workspace:
         # Step 1: Request the restore.
         restore_response = post_and_parse_json(
             url=f"{normalized_url}/snapshots/restore",
-            body={"claim_name": claim_name, "namespace": namespace},
+            body={
+                "claim_name": claim_name,
+                "namespace": namespace,
+                "snapshot_name": snapshot_name,
+            },
             timeout=timeout,
         )
         if not isinstance(restore_response, dict) or not isinstance(restore_response.get("claim_name"), str):

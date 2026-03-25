@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from io import BytesIO
+import json
 import socket
+import ssl
 from urllib.error import HTTPError, URLError
 
 import pytest
@@ -59,7 +61,7 @@ def fake_urlopen_for_create(
     pod_name: str = "pod-123",
 ):
     """Return a fake_urlopen that handles the two-step create flow."""
-    def fake_urlopen(request, timeout: float):
+    def fake_urlopen(request, timeout: float, context=None):
         if request.full_url.endswith("/workspaces") and request.get_method() == "POST":
             body = (
                 b'{"claim_name": "' + claim_name.encode()
@@ -96,7 +98,7 @@ def test_workspace_create_stores_claim_name(monkeypatch: pytest.MonkeyPatch) -> 
 
 
 def test_workspace_create_raises_on_failed_event(monkeypatch: pytest.MonkeyPatch) -> None:
-    def fake_urlopen(request, timeout: float):
+    def fake_urlopen(request, timeout: float, context=None):
         if request.full_url.endswith("/workspaces") and request.get_method() == "POST":
             return FakeResponse(body=b'{"claim_name": "c1", "status": "creating", "namespace": "ns"}')
         return FakeSSEResponse(lines=[
@@ -114,7 +116,7 @@ def test_workspace_create_raises_on_failed_event(monkeypatch: pytest.MonkeyPatch
 
 
 def test_workspace_create_raises_when_stream_ends_without_ready(monkeypatch: pytest.MonkeyPatch) -> None:
-    def fake_urlopen(request, timeout: float):
+    def fake_urlopen(request, timeout: float, context=None):
         if request.full_url.endswith("/workspaces") and request.get_method() == "POST":
             return FakeResponse(body=b'{"claim_name": "c1", "status": "creating", "namespace": "ns"}')
         # SSE stream with only a creating event, then closes
@@ -133,7 +135,7 @@ def test_workspace_create_raises_when_stream_ends_without_ready(monkeypatch: pyt
 
 
 def test_workspace_create_raises_on_unexpected_create_response(monkeypatch: pytest.MonkeyPatch) -> None:
-    def fake_urlopen(request, timeout: float):
+    def fake_urlopen(request, timeout: float, context=None):
         return FakeResponse(body=b'"just-a-string"')
 
     monkeypatch.setattr(funky._http, "urlopen", fake_urlopen)
@@ -147,7 +149,7 @@ def test_workspace_create_raises_on_unexpected_create_response(monkeypatch: pyte
 def test_workspace_create_timeout_has_actionable_message(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def fake_urlopen(request, timeout: float):
+    def fake_urlopen(request, timeout: float, context=None):
         raise URLError(socket.timeout("timed out"))
 
     monkeypatch.setattr(funky._http, "urlopen", fake_urlopen)
@@ -166,7 +168,7 @@ def test_execute_returns_structured_result(monkeypatch: pytest.MonkeyPatch) -> N
     captured: list = []
     base_fake = fake_urlopen_for_create()
 
-    def fake_urlopen(request, timeout: float):
+    def fake_urlopen(request, timeout: float, context=None):
         if request.full_url.endswith("/execute") and request.get_method() == "POST":
             captured.append(request)
             return FakeResponse(b'{"stdout":"remote-output","stderr":"warn","exit_code":3}')
@@ -194,7 +196,7 @@ def test_execute_returns_structured_result(monkeypatch: pytest.MonkeyPatch) -> N
 def test_execute_allows_empty_command(monkeypatch: pytest.MonkeyPatch) -> None:
     base_fake = fake_urlopen_for_create()
 
-    def fake_urlopen(request, timeout: float):
+    def fake_urlopen(request, timeout: float, context=None):
         if request.full_url.endswith("/execute") and request.get_method() == "POST":
             return FakeResponse(b'{"stdout":"done","stderr":"","exit_code":0}')
         return base_fake(request, timeout)
@@ -208,7 +210,7 @@ def test_execute_allows_empty_command(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_api_error_maps_validation_message(monkeypatch: pytest.MonkeyPatch) -> None:
-    def fake_urlopen(request, timeout: float):
+    def fake_urlopen(request, timeout: float, context=None):
         raise HTTPError(
             url=request.full_url,
             code=422,
@@ -244,7 +246,7 @@ def test_delete_calls_workspace_delete_endpoint(monkeypatch: pytest.MonkeyPatch)
     requests_made: list = []
     base_fake = fake_urlopen_for_create(claim_name="ws-delete-id", namespace="test-ns")
 
-    def fake_urlopen(request, timeout: float):
+    def fake_urlopen(request, timeout: float, context=None):
         requests_made.append(request)
         if request.get_method() == "DELETE":
             return FakeResponse(b'{"deleted": true}')
@@ -266,7 +268,7 @@ def test_delete_raises_on_unexpected_response_shape(
 ) -> None:
     base_fake = fake_urlopen_for_create(claim_name="ws-delete-id")
 
-    def fake_urlopen(request, timeout: float):
+    def fake_urlopen(request, timeout: float, context=None):
         if request.get_method() == "DELETE":
             return FakeResponse(b'{"ok": true}')
         return base_fake(request, timeout)
@@ -292,7 +294,7 @@ def _make_workspace(monkeypatch: pytest.MonkeyPatch, **kwargs) -> Workspace:
 def test_snapshot_triggers_and_waits_via_sse(monkeypatch: pytest.MonkeyPatch) -> None:
     ws = _make_workspace(monkeypatch)
 
-    def fake_urlopen(request, timeout: float):
+    def fake_urlopen(request, timeout: float, context=None):
         url = request.full_url
         if "/snapshots/triggers" in url and "/events" not in url and request.get_method() == "POST":
             return FakeResponse(b'{"name": "trigger-abc", "namespace": "test-ns", "target_pod": "pod-123"}')
@@ -310,13 +312,13 @@ def test_snapshot_triggers_and_waits_via_sse(monkeypatch: pytest.MonkeyPatch) ->
     monkeypatch.setattr(funky._http, "urlopen", fake_urlopen)
     result = ws.snapshot()
 
-    assert result is ws
+    assert result == "snap-1"
 
 
 def test_snapshot_raises_on_unexpected_trigger_response(monkeypatch: pytest.MonkeyPatch) -> None:
     ws = _make_workspace(monkeypatch)
 
-    def fake_urlopen(request, timeout: float):
+    def fake_urlopen(request, timeout: float, context=None):
         return FakeResponse(b'{"error": "bad"}')
 
     monkeypatch.setattr(funky._http, "urlopen", fake_urlopen)
@@ -330,7 +332,7 @@ def test_snapshot_raises_on_unexpected_trigger_response(monkeypatch: pytest.Monk
 def test_snapshot_raises_on_failed_event(monkeypatch: pytest.MonkeyPatch) -> None:
     ws = _make_workspace(monkeypatch)
 
-    def fake_urlopen(request, timeout: float):
+    def fake_urlopen(request, timeout: float, context=None):
         url = request.full_url
         if "/snapshots/triggers" in url and "/events" not in url:
             return FakeResponse(b'{"name": "trigger-abc", "namespace": "ns"}')
@@ -351,7 +353,7 @@ def test_snapshot_raises_on_failed_event(monkeypatch: pytest.MonkeyPatch) -> Non
 def test_snapshot_raises_when_stream_ends_without_ready(monkeypatch: pytest.MonkeyPatch) -> None:
     ws = _make_workspace(monkeypatch)
 
-    def fake_urlopen(request, timeout: float):
+    def fake_urlopen(request, timeout: float, context=None):
         url = request.full_url
         if "/snapshots/triggers" in url and "/events" not in url:
             return FakeResponse(b'{"name": "trigger-abc", "namespace": "ns"}')
@@ -373,9 +375,12 @@ def test_snapshot_raises_when_stream_ends_without_ready(monkeypatch: pytest.Monk
 
 
 def test_restore_returns_new_workspace(monkeypatch: pytest.MonkeyPatch) -> None:
-    def fake_urlopen(request, timeout: float):
+    restore_request_bodies: list[dict] = []
+
+    def fake_urlopen(request, timeout: float, context=None):
         url = request.full_url
         if "/snapshots/restore" in url and "/events" not in url and request.get_method() == "POST":
+            restore_request_bodies.append(json.loads(request.data.decode("utf-8")))
             return FakeResponse(
                 b'{"claim_name": "restore-abc", "status": "restoring", '
                 b'"template_name": "tpl", "namespace": "snap-ns"}'
@@ -392,16 +397,19 @@ def test_restore_returns_new_workspace(monkeypatch: pytest.MonkeyPatch) -> None:
         return FakeResponse(body=b'{}')
 
     monkeypatch.setattr(funky._http, "urlopen", fake_urlopen)
-    ws = Workspace.restore("original-claim", "snap-ns")
+    ws = Workspace.restore("original-claim", "snap-ns", "snap-123")
 
     assert isinstance(ws, Workspace)
     assert ws.claim_name == "restore-abc"
     assert ws.namespace == "snap-ns"
     assert ws.pod_name == "restored-pod"
+    assert restore_request_bodies == [
+        {"claim_name": "original-claim", "namespace": "snap-ns", "snapshot_name": "snap-123"}
+    ]
 
 
 def test_restore_raises_on_failed_event(monkeypatch: pytest.MonkeyPatch) -> None:
-    def fake_urlopen(request, timeout: float):
+    def fake_urlopen(request, timeout: float, context=None):
         url = request.full_url
         if "/snapshots/restore" in url and "/events" not in url:
             return FakeResponse(b'{"claim_name": "restore-abc", "status": "restoring", "namespace": "ns"}')
@@ -414,13 +422,13 @@ def test_restore_raises_on_failed_event(monkeypatch: pytest.MonkeyPatch) -> None
     monkeypatch.setattr(funky._http, "urlopen", fake_urlopen)
 
     with pytest.raises(APIError) as exc_info:
-        Workspace.restore("original-claim", "ns")
+        Workspace.restore("original-claim", "ns", "snap-123")
 
     assert "snapshot corrupted" in str(exc_info.value)
 
 
 def test_restore_raises_when_stream_ends_without_ready(monkeypatch: pytest.MonkeyPatch) -> None:
-    def fake_urlopen(request, timeout: float):
+    def fake_urlopen(request, timeout: float, context=None):
         url = request.full_url
         if "/snapshots/restore" in url and "/events" not in url:
             return FakeResponse(b'{"claim_name": "restore-abc", "status": "restoring", "namespace": "ns"}')
@@ -433,6 +441,22 @@ def test_restore_raises_when_stream_ends_without_ready(monkeypatch: pytest.Monke
     monkeypatch.setattr(funky._http, "urlopen", fake_urlopen)
 
     with pytest.raises(APIError) as exc_info:
-        Workspace.restore("original-claim", "ns")
+        Workspace.restore("original-claim", "ns", "snap-123")
 
     assert "without restored workspace becoming ready" in str(exc_info.value)
+
+
+def test_http_uses_explicit_ssl_context(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured_contexts: list[ssl.SSLContext] = []
+
+    def fake_urlopen(request, timeout: float, context=None):
+        assert request.full_url == "https://api.funky.dev/workspaces"
+        captured_contexts.append(context)
+        return FakeResponse(body=b'{"claim_name": "workspace-claim-abc", "namespace": "test-ns"}')
+
+    monkeypatch.setattr(funky._http, "urlopen", fake_urlopen)
+    response = funky._http.post_and_parse_json("https://api.funky.dev/workspaces")
+
+    assert response == {"claim_name": "workspace-claim-abc", "namespace": "test-ns"}
+    assert len(captured_contexts) == 1
+    assert isinstance(captured_contexts[0], ssl.SSLContext)
